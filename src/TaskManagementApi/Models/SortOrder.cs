@@ -1,11 +1,9 @@
-using System.Text.Json.Serialization;
-
 namespace TaskManagementApi.Models;
 
 /// <summary>
 /// Represents the sort order for task listing.
+/// Global JsonStringEnumConverter with SnakeCaseLower in Program.cs handles serialization.
 /// </summary>
-[JsonConverter(typeof(JsonStringEnumConverter<SortOrder>))]
 public enum SortOrder
 {
     CreatedAtAsc,

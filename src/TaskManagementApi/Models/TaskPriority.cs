@@ -1,11 +1,9 @@
-using System.Text.Json.Serialization;
-
 namespace TaskManagementApi.Models;
 
 /// <summary>
 /// Represents the priority level of a task.
+/// Global JsonStringEnumConverter with SnakeCaseLower in Program.cs handles serialization.
 /// </summary>
-[JsonConverter(typeof(JsonStringEnumConverter<TaskPriority>))]
 public enum TaskPriority
 {
     Low,
