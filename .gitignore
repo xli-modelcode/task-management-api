@@ -148,3 +148,7 @@ nosetests.xml
 coverage.xml
 *.cover
 *.py,cover
+
+# ----- Core dumps -----
+core
+core.*
