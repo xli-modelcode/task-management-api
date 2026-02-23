@@ -1,11 +1,9 @@
-using System.Text.Json.Serialization;
-
 namespace TaskManagementApi.Models;
 
 /// <summary>
 /// Represents the current state of a task.
+/// Global JsonStringEnumConverter with SnakeCaseLower in Program.cs handles serialization.
 /// </summary>
-[JsonConverter(typeof(JsonStringEnumConverter<TaskStatus>))]
 public enum TaskStatus
 {
     Pending,
