@@ -42,7 +42,7 @@ public class TaskService
             {
                 Id = Guid.NewGuid().ToString(),
                 Title = req.Title,
-                Description = req.Description,
+                Description = req.Description ?? string.Empty,
                 Status = Models.TaskStatus.Pending,
                 Priority = priority,
                 Tags = req.Tags ?? new List<string>(),

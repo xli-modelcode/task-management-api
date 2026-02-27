@@ -98,6 +98,7 @@ replay_pid*
 *.snupkg
 packages/
 artifacts/
+TestResults/
 
 # ----- Ruby -----
 *.gem
