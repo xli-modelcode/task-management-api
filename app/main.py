@@ -73,17 +73,43 @@ async def validation_exception_handler(
 ) -> JSONResponse:
     """Override FastAPI's default 422 handler to return 400 with the
     canonical ``{"error": {"code": "VALIDATION_ERROR", "message": ...}}``
-    envelope that the Go API uses."""
-    # Build a single human-readable message from Pydantic errors
+    envelope that the Go API uses.
+
+    Error messages are mapped to match Go/Gin binding-error format so that
+    the REST contract stays identical across the two implementations.
+    """
     errors = exc.errors()
     if errors:
         first = errors[0]
-        loc = " -> ".join(str(part) for part in first.get("loc", []) if part != "body")
+        error_type = first.get("type", "")
+        loc = first.get("loc", ())
         msg = first.get("msg", str(exc))
-        if loc:
-            message = f"{loc}: {msg}"
+
+        # Extract the field name, skipping the "body" prefix added by FastAPI
+        field_parts = [str(p) for p in loc if p != "body"]
+        field_name = field_parts[0] if field_parts else ""
+
+        # --- Map to Go/Gin-style error messages ---
+
+        if field_name == "title" and error_type in ("missing", "string_too_short"):
+            # Go binding:"required,min=1" – both missing and empty-string
+            # trigger the 'required' validator in Gin.
+            message = (
+                "Key: 'CreateTaskRequest.Title' Error:Field validation for "
+                "'Title' failed on the 'required' tag"
+            )
+        elif error_type == "enum":
+            # Go validates enums in the service layer with:
+            #   fmt.Errorf("invalid <field>: %s", value)
+            raw_value = first.get("input", "")
+            message = f"invalid {field_name}: {raw_value}"
         else:
-            message = msg
+            # Fallback – keep the Pydantic-style message
+            loc_str = " -> ".join(field_parts)
+            if loc_str:
+                message = f"{loc_str}: {msg}"
+            else:
+                message = msg
     else:
         message = str(exc)
 
