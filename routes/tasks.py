@@ -50,6 +50,13 @@ def list_tasks():
                 f"invalid page_size value: {page_size_raw}",
             )), 400
 
+    # Reject negative page_size (matches Go's min:1 binding validation)
+    if page_size < 0:
+        return jsonify(error_response(
+            "VALIDATION_ERROR",
+            f"invalid page_size value: {page_size_raw}",
+        )), 400
+
     # Default to 20 when 0
     if page_size == 0:
         page_size = 20
