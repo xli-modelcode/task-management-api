@@ -1,10 +1,11 @@
-"""Task write endpoints ported from Go rest/server/handlers.go."""
+"""Task endpoints ported from Go rest/server/handlers.go."""
 
 from __future__ import annotations
 
 from flask import Blueprint, current_app, jsonify, request
 
 from models import (
+    ListTasksQuery,
     TaskNotFoundError,
     TaskStatus,
     TaskPriority,
@@ -18,6 +19,84 @@ tasks_bp = Blueprint("tasks", __name__, url_prefix="/api/v1/tasks")
 def _get_store():
     """Return the ``TaskStore`` attached to the running app."""
     return current_app.config["TASK_STORE"]
+
+
+# ------------------------------------------------------------------
+# GET /api/v1/tasks
+# ------------------------------------------------------------------
+
+@tasks_bp.route("", methods=["GET"])
+def list_tasks():
+    """List tasks with optional filtering, sorting, and pagination.
+
+    Query parameters:
+        page_size   - integer, default 20. Returns 400 if not a valid integer.
+        page_token  - string, default ""
+        status      - string, default ""
+        assigned_to - string, default ""
+        tags        - string, default ""
+        sort_order  - string, default ""
+    """
+    # Parse page_size — must be a valid integer when provided
+    page_size_raw = request.args.get("page_size", "")
+    if page_size_raw == "":
+        page_size = 20
+    else:
+        try:
+            page_size = int(page_size_raw)
+        except (ValueError, TypeError):
+            return jsonify(error_response(
+                "VALIDATION_ERROR",
+                f"invalid page_size value: {page_size_raw}",
+            )), 400
+
+    # Default to 20 when 0
+    if page_size == 0:
+        page_size = 20
+
+    page_token = request.args.get("page_token", "")
+    status = request.args.get("status", "")
+    assigned_to = request.args.get("assigned_to", "")
+    tags = request.args.get("tags", "")
+    sort_order = request.args.get("sort_order", "")
+
+    query = ListTasksQuery(
+        page_size=page_size,
+        page_token=page_token,
+        status=status,
+        assigned_to=assigned_to,
+        tags=tags,
+        sort_order=sort_order,
+    )
+
+    store = _get_store()
+
+    try:
+        response = store.list_tasks(query)
+    except Exception as e:
+        return jsonify(error_response("INTERNAL_ERROR", str(e))), 500
+
+    return jsonify(response.to_dict()), 200
+
+
+# ------------------------------------------------------------------
+# GET /api/v1/tasks/<id>
+# ------------------------------------------------------------------
+
+@tasks_bp.route("/<task_id>", methods=["GET"])
+def get_task(task_id):
+    """Get a single task by its ID.
+
+    Returns 404 if the task does not exist.
+    """
+    store = _get_store()
+
+    try:
+        task = store.get_task(task_id)
+    except TaskNotFoundError as e:
+        return jsonify(error_response("NOT_FOUND", str(e))), 404
+
+    return jsonify(task.to_dict()), 200
 
 
 # ------------------------------------------------------------------
