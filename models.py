@@ -95,6 +95,89 @@ def error_response(code: str, message: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Request / Response types (mirrors Go structs in internal/models/)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class CreateTaskRequest:
+    """Body for ``POST /api/v1/tasks``.
+
+    Mirrors Go ``CreateTaskRequest``.
+    """
+
+    title: str
+    description: str = ""
+    priority: str = ""
+    tags: list[str] = field(default_factory=list)
+    assigned_to: Optional[str] = None
+    due_date: Optional[str] = None
+
+
+@dataclass
+class UpdateTaskRequest:
+    """Body for ``PUT /api/v1/tasks/<id>``.
+
+    All fields are optional — only provided fields are applied.
+    Mirrors Go ``UpdateTaskRequest``.
+    """
+
+    title: Optional[str] = None
+    description: Optional[str] = None
+    status: Optional[str] = None
+    priority: Optional[str] = None
+    tags: Optional[list[str]] = None
+    assigned_to: Optional[str] = None
+    due_date: Optional[str] = None
+
+
+@dataclass
+class UpdateTaskStatusRequest:
+    """Body for ``PATCH /api/v1/tasks/<id>/status``.
+
+    Mirrors Go ``UpdateTaskStatusRequest``.
+    """
+
+    status: str = ""
+
+
+@dataclass
+class ErrorDetail:
+    """Structured error detail inside an ``ErrorResponse``.
+
+    Mirrors Go ``ErrorDetail``.
+    """
+
+    code: str = ""
+    message: str = ""
+    details: Optional[Any] = None
+
+    def to_dict(self) -> dict:
+        """Serialise to a JSON-compatible dict.
+
+        Implements Go ``omitempty`` semantics: ``details`` is omitted when
+        ``None``.
+        """
+        d: dict = {"code": self.code, "message": self.message}
+        if self.details is not None:
+            d["details"] = self.details
+        return d
+
+
+@dataclass
+class ErrorResponse:
+    """Standard error envelope returned by every error path.
+
+    Mirrors Go ``ErrorResponse``.
+    """
+
+    error: ErrorDetail = field(default_factory=ErrorDetail)
+
+    def to_dict(self) -> dict:
+        """Serialise to a JSON-compatible dict."""
+        return {"error": self.error.to_dict()}
+
+
+# ---------------------------------------------------------------------------
 # Exceptions
 # ---------------------------------------------------------------------------
 
