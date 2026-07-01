@@ -26,3 +26,9 @@ def app():
 def client(app):
     """Return a Flask test client backed by the per-test app."""
     return app.test_client()
+
+
+@pytest.fixture()
+def store(app):
+    """Return the TaskStore instance attached to the test app."""
+    return app.config["TASK_STORE"]
