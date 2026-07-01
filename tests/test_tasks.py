@@ -1,4 +1,4 @@
-"""Tests for write endpoints: POST, PUT, PATCH, DELETE.
+"""Tests for all task endpoints: POST, PUT, PATCH, DELETE, GET list, GET by id.
 
 Each test gets a fresh app / store (via the ``client`` fixture), so
 the store always starts with the two seeded sample tasks.
@@ -8,6 +8,9 @@ from __future__ import annotations
 
 import json
 import uuid
+from datetime import datetime, timezone, timedelta
+
+from models import TaskStatus, TaskPriority
 
 # =====================================================================
 # Helper
@@ -273,18 +276,507 @@ class TestDeleteTask:
         assert resp.get_json()["error"]["code"] == "NOT_FOUND"
 
     def test_deleted_task_not_found_on_subsequent_request(self, client):
-        """After deletion, a GET (or any operation) on the same ID should 404.
-
-        Since GET isn't implemented in this milestone yet, we use DELETE
-        again — a second DELETE on the same ID must return 404.
-        """
+        """After deletion, GET on the same ID should 404."""
         resp, created = _create_task(client)
         task_id = created["id"]
 
         resp = client.delete(f"/api/v1/tasks/{task_id}")
         assert resp.status_code == 204
 
-        # Second delete on the same ID -> 404
-        resp = client.delete(f"/api/v1/tasks/{task_id}")
+        # GET on deleted ID -> 404
+        resp = client.get(f"/api/v1/tasks/{task_id}")
         assert resp.status_code == 404
         assert resp.get_json()["error"]["code"] == "NOT_FOUND"
+
+
+# =====================================================================
+# GET /api/v1/tasks  — List (pagination)
+# =====================================================================
+
+
+class TestListTasksDefault:
+    """Default request returns sample tasks with total_count."""
+
+    def test_list_tasks_default(self, client):
+        resp = client.get("/api/v1/tasks")
+        assert resp.status_code == 200
+
+        data = resp.get_json()
+        assert "tasks" in data
+        assert "total_count" in data
+        # The store is seeded with 2 sample tasks
+        assert data["total_count"] == 2
+        assert len(data["tasks"]) == 2
+
+
+class TestListTasksCustomPageSize:
+    """page_size=1 returns only 1 task and next_page_token."""
+
+    def test_list_tasks_custom_page_size(self, client):
+        resp = client.get("/api/v1/tasks?page_size=1")
+        assert resp.status_code == 200
+
+        data = resp.get_json()
+        assert len(data["tasks"]) == 1
+        assert "next_page_token" in data
+        assert data["next_page_token"] != ""
+        # total_count still reflects all matching tasks
+        assert data["total_count"] == 2
+
+
+class TestListTasksNextPageToken:
+    """Pagination through multiple pages."""
+
+    def test_list_tasks_next_page_token(self, client):
+        # First page
+        resp1 = client.get("/api/v1/tasks?page_size=1")
+        assert resp1.status_code == 200
+        data1 = resp1.get_json()
+        assert len(data1["tasks"]) == 1
+        assert "next_page_token" in data1
+        next_token = data1["next_page_token"]
+
+        # Second page using the token from first page
+        resp2 = client.get(f"/api/v1/tasks?page_size=1&page_token={next_token}")
+        assert resp2.status_code == 200
+        data2 = resp2.get_json()
+        assert len(data2["tasks"]) == 1
+
+        # The two pages should return different tasks
+        assert data1["tasks"][0]["id"] != data2["tasks"][0]["id"]
+
+
+class TestListTasksEmptyResults:
+    """Filter by status no task has returns empty list."""
+
+    def test_list_tasks_empty_results(self, client):
+        resp = client.get("/api/v1/tasks?status=cancelled")
+        assert resp.status_code == 200
+
+        data = resp.get_json()
+        assert data["tasks"] == []
+        assert data["total_count"] == 0
+
+
+class TestListTasksInvalidPageSize:
+    """Non-integer page_size returns 400."""
+
+    def test_list_tasks_invalid_page_size(self, client):
+        resp = client.get("/api/v1/tasks?page_size=abc")
+        assert resp.status_code == 400
+
+        data = resp.get_json()
+        assert data["error"]["code"] == "VALIDATION_ERROR"
+
+
+# =====================================================================
+# GET /api/v1/tasks  — List (filtering)
+# =====================================================================
+
+
+class TestFilterByStatus:
+    """Filter tasks by a specific status."""
+
+    def test_filter_by_status(self, client, store):
+        # Create a task via store and set its status to in_progress
+        task = store.create_task({
+            "title": "Status filter test",
+            "description": "Testing status filter",
+            "priority": "medium",
+        })
+        task.status = TaskStatus.IN_PROGRESS
+
+        resp = client.get("/api/v1/tasks?status=in_progress")
+        assert resp.status_code == 200
+
+        data = resp.get_json()
+        assert data["total_count"] >= 1
+        # Every returned task must have the filtered status
+        for t in data["tasks"]:
+            assert t["status"] == "in_progress"
+
+        # Our seeded task should be in the results
+        returned_ids = [t["id"] for t in data["tasks"]]
+        assert task.id in returned_ids
+
+
+class TestFilterByAssignedTo:
+    """Filter tasks by assigned_to field."""
+
+    def test_filter_by_assigned_to(self, client, store):
+        task = store.create_task({
+            "title": "Assigned to alice",
+            "description": "Testing assigned_to filter",
+            "priority": "low",
+            "assigned_to": "alice",
+        })
+
+        resp = client.get("/api/v1/tasks?assigned_to=alice")
+        assert resp.status_code == 200
+
+        data = resp.get_json()
+        assert data["total_count"] >= 1
+        for t in data["tasks"]:
+            assert t["assigned_to"] == "alice"
+
+        returned_ids = [t["id"] for t in data["tasks"]]
+        assert task.id in returned_ids
+
+
+class TestFilterByTags:
+    """AND-logic tag filtering."""
+
+    def test_filter_by_tags(self, client, store):
+        # The sample data already has a task with tags ["go", "rest", "api"]
+        # and another with ["go", "grpc", "protobuf"].
+        # Filtering by "go,rest" should only return tasks that have BOTH tags.
+
+        resp = client.get("/api/v1/tasks?tags=go,rest")
+        assert resp.status_code == 200
+
+        data = resp.get_json()
+        # Only the first sample task ("Implement Go REST API") has both "go" and "rest"
+        assert data["total_count"] >= 1
+        for t in data["tasks"]:
+            assert "go" in t["tags"]
+            assert "rest" in t["tags"]
+
+        # Seed a task that has only "go" but not "rest" - it should NOT appear
+        task_go_only = store.create_task({
+            "title": "Go only task",
+            "description": "Has only go tag",
+            "priority": "low",
+            "tags": ["go"],
+        })
+
+        resp2 = client.get("/api/v1/tasks?tags=go,rest")
+        data2 = resp2.get_json()
+        returned_ids = [t["id"] for t in data2["tasks"]]
+        assert task_go_only.id not in returned_ids
+
+
+class TestFilterCombined:
+    """Combine multiple filters for correct intersection."""
+
+    def test_filter_combined(self, client, store):
+        # Seed a task with specific status and tags
+        task = store.create_task({
+            "title": "Combined filter test",
+            "description": "Has specific status and tags",
+            "priority": "high",
+            "tags": ["python", "testing"],
+            "assigned_to": "bob",
+        })
+        task.status = TaskStatus.COMPLETED
+
+        # Seed another task that matches only one filter
+        task2 = store.create_task({
+            "title": "Only status match",
+            "description": "Completed but different tags",
+            "priority": "low",
+            "tags": ["java"],
+        })
+        task2.status = TaskStatus.COMPLETED
+
+        # Filter by status=completed AND tags=python,testing
+        resp = client.get("/api/v1/tasks?status=completed&tags=python,testing")
+        assert resp.status_code == 200
+
+        data = resp.get_json()
+        returned_ids = [t["id"] for t in data["tasks"]]
+        # The task with both matching status and tags should be present
+        assert task.id in returned_ids
+        # The task that only matches status should NOT be present
+        assert task2.id not in returned_ids
+
+        # Also test status + assigned_to combination
+        resp2 = client.get("/api/v1/tasks?status=completed&assigned_to=bob")
+        data2 = resp2.get_json()
+        returned_ids2 = [t["id"] for t in data2["tasks"]]
+        assert task.id in returned_ids2
+        assert task2.id not in returned_ids2
+
+
+# =====================================================================
+# GET /api/v1/tasks  — List (sorting)
+# =====================================================================
+
+
+class TestSortCreatedAtAsc:
+    """Verify ascending sort by created_at."""
+
+    def test_sort_created_at_asc(self, client, store):
+        # Seed tasks with controlled creation times
+        now = datetime.now(timezone.utc)
+        task_old = store.create_task({
+            "title": "Old task",
+            "description": "Created first",
+            "priority": "low",
+        })
+        task_old.created_at = now - timedelta(hours=3)
+
+        task_mid = store.create_task({
+            "title": "Mid task",
+            "description": "Created second",
+            "priority": "low",
+        })
+        task_mid.created_at = now - timedelta(hours=2)
+
+        task_new = store.create_task({
+            "title": "New task",
+            "description": "Created third",
+            "priority": "low",
+        })
+        task_new.created_at = now - timedelta(hours=1)
+
+        resp = client.get("/api/v1/tasks?sort_order=created_at_asc")
+        assert resp.status_code == 200
+
+        data = resp.get_json()
+        tasks = data["tasks"]
+        # Verify ascending order: each task's created_at <= next task's created_at
+        for i in range(len(tasks) - 1):
+            assert tasks[i]["created_at"] <= tasks[i + 1]["created_at"]
+
+
+class TestSortCreatedAtDesc:
+    """Verify descending sort by created_at."""
+
+    def test_sort_created_at_desc(self, client, store):
+        now = datetime.now(timezone.utc)
+        task_old = store.create_task({
+            "title": "Old task desc",
+            "description": "Created first",
+            "priority": "low",
+        })
+        task_old.created_at = now - timedelta(hours=3)
+
+        task_new = store.create_task({
+            "title": "New task desc",
+            "description": "Created last",
+            "priority": "low",
+        })
+        task_new.created_at = now - timedelta(hours=1)
+
+        resp = client.get("/api/v1/tasks?sort_order=created_at_desc")
+        assert resp.status_code == 200
+
+        data = resp.get_json()
+        tasks = data["tasks"]
+        # Verify descending order: each task's created_at >= next task's created_at
+        for i in range(len(tasks) - 1):
+            assert tasks[i]["created_at"] >= tasks[i + 1]["created_at"]
+
+
+class TestSortDueDateAsc:
+    """Ascending sort with nil-last for due_date."""
+
+    def test_sort_due_date_asc(self, client, store):
+        now = datetime.now(timezone.utc)
+
+        task_no_due = store.create_task({
+            "title": "No due date",
+            "description": "Should be at end",
+            "priority": "low",
+        })
+        # due_date is None by default
+
+        task_later = store.create_task({
+            "title": "Later due",
+            "description": "Due later",
+            "priority": "low",
+            "due_date": (now + timedelta(days=10)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        })
+
+        task_sooner = store.create_task({
+            "title": "Sooner due",
+            "description": "Due sooner",
+            "priority": "low",
+            "due_date": (now + timedelta(days=2)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        })
+
+        resp = client.get("/api/v1/tasks?sort_order=due_date_asc")
+        assert resp.status_code == 200
+
+        data = resp.get_json()
+        tasks = data["tasks"]
+
+        # Separate tasks with and without due dates
+        with_due = [t for t in tasks if "due_date" in t]
+        without_due = [t for t in tasks if "due_date" not in t]
+
+        # Tasks without due_date should appear at the end (nil-last)
+        if with_due and without_due:
+            last_with_due_idx = max(
+                i for i, t in enumerate(tasks) if "due_date" in t
+            )
+            first_without_due_idx = min(
+                i for i, t in enumerate(tasks) if "due_date" not in t
+            )
+            assert last_with_due_idx < first_without_due_idx
+
+        # Tasks with due dates should be in ascending order
+        for i in range(len(with_due) - 1):
+            assert with_due[i]["due_date"] <= with_due[i + 1]["due_date"]
+
+
+class TestSortDueDateDesc:
+    """Descending sort with nil-last for due_date."""
+
+    def test_sort_due_date_desc(self, client, store):
+        now = datetime.now(timezone.utc)
+
+        task_no_due = store.create_task({
+            "title": "No due date desc",
+            "description": "Should be at end",
+            "priority": "low",
+        })
+
+        task_later = store.create_task({
+            "title": "Later due desc",
+            "description": "Due later",
+            "priority": "low",
+            "due_date": (now + timedelta(days=10)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        })
+
+        task_sooner = store.create_task({
+            "title": "Sooner due desc",
+            "description": "Due sooner",
+            "priority": "low",
+            "due_date": (now + timedelta(days=2)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        })
+
+        resp = client.get("/api/v1/tasks?sort_order=due_date_desc")
+        assert resp.status_code == 200
+
+        data = resp.get_json()
+        tasks = data["tasks"]
+
+        with_due = [t for t in tasks if "due_date" in t]
+        without_due = [t for t in tasks if "due_date" not in t]
+
+        # Tasks without due_date should still appear at the end (nil-last)
+        if with_due and without_due:
+            last_with_due_idx = max(
+                i for i, t in enumerate(tasks) if "due_date" in t
+            )
+            first_without_due_idx = min(
+                i for i, t in enumerate(tasks) if "due_date" not in t
+            )
+            assert last_with_due_idx < first_without_due_idx
+
+        # Tasks with due dates should be in descending order
+        for i in range(len(with_due) - 1):
+            assert with_due[i]["due_date"] >= with_due[i + 1]["due_date"]
+
+
+class TestSortPriorityAsc:
+    """Ascending sort by numeric priority value."""
+
+    def test_sort_priority_asc(self, client, store):
+        store.create_task({
+            "title": "Critical task",
+            "description": "Prio critical",
+            "priority": "critical",
+        })
+        store.create_task({
+            "title": "Low task",
+            "description": "Prio low",
+            "priority": "low",
+        })
+        store.create_task({
+            "title": "High task",
+            "description": "Prio high",
+            "priority": "high",
+        })
+        store.create_task({
+            "title": "Medium task",
+            "description": "Prio medium",
+            "priority": "medium",
+        })
+
+        resp = client.get("/api/v1/tasks?sort_order=priority_asc")
+        assert resp.status_code == 200
+
+        data = resp.get_json()
+        tasks = data["tasks"]
+
+        priority_order = {"low": 1, "medium": 2, "high": 3, "critical": 4}
+        for i in range(len(tasks) - 1):
+            assert priority_order[tasks[i]["priority"]] <= priority_order[tasks[i + 1]["priority"]]
+
+
+class TestSortPriorityDesc:
+    """Descending sort by numeric priority value."""
+
+    def test_sort_priority_desc(self, client, store):
+        store.create_task({
+            "title": "Critical task desc",
+            "description": "Prio critical",
+            "priority": "critical",
+        })
+        store.create_task({
+            "title": "Low task desc",
+            "description": "Prio low",
+            "priority": "low",
+        })
+        store.create_task({
+            "title": "High task desc",
+            "description": "Prio high",
+            "priority": "high",
+        })
+        store.create_task({
+            "title": "Medium task desc",
+            "description": "Prio medium",
+            "priority": "medium",
+        })
+
+        resp = client.get("/api/v1/tasks?sort_order=priority_desc")
+        assert resp.status_code == 200
+
+        data = resp.get_json()
+        tasks = data["tasks"]
+
+        priority_order = {"low": 1, "medium": 2, "high": 3, "critical": 4}
+        for i in range(len(tasks) - 1):
+            assert priority_order[tasks[i]["priority"]] >= priority_order[tasks[i + 1]["priority"]]
+
+
+# =====================================================================
+# GET /api/v1/tasks/<id>  — Get by ID
+# =====================================================================
+
+
+class TestGetTaskValidId:
+    """Get a seeded task by ID returns all expected fields."""
+
+    def test_get_task_valid_id(self, client, store):
+        # Use a seeded task - grab the first one from the store
+        task_id = next(iter(store._tasks))
+        task = store._tasks[task_id]
+
+        resp = client.get(f"/api/v1/tasks/{task_id}")
+        assert resp.status_code == 200
+
+        data = resp.get_json()
+        # Verify all expected fields are present
+        assert data["id"] == task_id
+        assert data["title"] == task.title
+        assert data["description"] == task.description
+        assert data["status"] == task.status.value
+        assert data["priority"] == task.priority.value
+        assert data["tags"] == task.tags
+        assert data["created_by"] == task.created_by
+        assert "created_at" in data
+        assert "updated_at" in data
+
+
+class TestGetTaskNotFound:
+    """Requesting nonexistent ID returns 404 with NOT_FOUND."""
+
+    def test_get_task_not_found(self, client):
+        resp = client.get("/api/v1/tasks/nonexistent-uuid")
+        assert resp.status_code == 404
+
+        data = resp.get_json()
+        assert data["error"]["code"] == "NOT_FOUND"
