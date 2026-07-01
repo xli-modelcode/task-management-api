@@ -7,6 +7,7 @@ import os
 from flask import Flask
 from flask_cors import CORS
 
+from routes.health import health_bp
 from routes.tasks import tasks_bp
 from store import TaskStore
 
@@ -15,7 +16,7 @@ def create_app() -> Flask:
     """Create and configure the Flask application.
 
     Mirrors the Go main(): sets up CORS, creates a ``TaskStore``, and
-    registers the tasks blueprint.
+    registers the tasks and health blueprints.
     """
     app = Flask(__name__)
 
@@ -31,6 +32,7 @@ def create_app() -> Flask:
     app.config["TASK_STORE"] = TaskStore()
 
     # Register blueprints
+    app.register_blueprint(health_bp)
     app.register_blueprint(tasks_bp)
 
     return app
