@@ -53,6 +53,17 @@ _PRIORITY_VALUES = {
 }
 
 
+class SortOrder(str, enum.Enum):
+    """Represents the sort order for task listing."""
+
+    CREATED_AT_ASC = "created_at_asc"
+    CREATED_AT_DESC = "created_at_desc"
+    DUE_DATE_ASC = "due_date_asc"
+    DUE_DATE_DESC = "due_date_desc"
+    PRIORITY_ASC = "priority_asc"
+    PRIORITY_DESC = "priority_desc"
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -138,6 +149,18 @@ class UpdateTaskStatusRequest:
     """
 
     status: str = ""
+
+
+@dataclass
+class ListTasksQuery:
+    """Represents query parameters for listing tasks."""
+
+    page_size: int = 20
+    page_token: str = ""
+    status: str = ""
+    assigned_to: str = ""
+    tags: str = ""
+    sort_order: str = ""
 
 
 @dataclass
@@ -236,3 +259,31 @@ class Task:
             d["completed_at"] = format_datetime(self.completed_at)
 
         return d
+
+
+# ---------------------------------------------------------------------------
+# List Response
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ListTasksResponse:
+    """Represents the response for listing tasks."""
+
+    tasks: list[Task]
+    next_page_token: str = ""
+    total_count: int = 0
+
+    def to_dict(self) -> dict:
+        """Serialize to a dictionary.
+
+        Omits next_page_token when empty string (matching Go's omitempty).
+        """
+        result: dict = {
+            "tasks": [task.to_dict() for task in self.tasks],
+            "total_count": self.total_count,
+        }
+
+        if self.next_page_token:
+            result["next_page_token"] = self.next_page_token
+
+        return result
