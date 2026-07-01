@@ -97,6 +97,16 @@ class TestCreateTask:
         assert "due_date" not in data
         assert "completed_at" not in data
 
+    def test_create_with_due_date(self, client):
+        resp, data = _create_task(client, due_date="2025-12-31T23:59:59Z")
+        assert resp.status_code == 201
+        assert data["due_date"] == "2025-12-31T23:59:59Z"
+
+    def test_create_with_assigned_to(self, client):
+        resp, data = _create_task(client, assigned_to="alice")
+        assert resp.status_code == 201
+        assert data["assigned_to"] == "alice"
+
 
 # =====================================================================
 # PUT /api/v1/tasks/<id>  — Update
@@ -155,6 +165,19 @@ class TestUpdateTask:
         )
         assert resp.status_code == 404
         assert resp.get_json()["error"]["code"] == "NOT_FOUND"
+
+    def test_update_due_date(self, client):
+        resp, created = _create_task(client)
+        task_id = created["id"]
+
+        resp = client.put(
+            f"/api/v1/tasks/{task_id}",
+            data=json.dumps({"due_date": "2025-06-15T12:00:00Z"}),
+            content_type="application/json",
+        )
+        assert resp.status_code == 200
+        updated = resp.get_json()
+        assert updated["due_date"] == "2025-06-15T12:00:00Z"
 
     def test_completed_at_set_when_status_transitions_to_completed(self, client):
         resp, created = _create_task(client)

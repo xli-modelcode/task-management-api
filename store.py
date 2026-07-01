@@ -13,6 +13,7 @@ from models import (
     TaskPriority,
     TaskStatus,
     ValidationError,
+    parse_datetime,
 )
 
 
@@ -87,7 +88,7 @@ class TaskStore:
                 assigned_to=data.get("assigned_to"),
                 created_at=now,
                 updated_at=now,
-                due_date=data.get("due_date"),
+                due_date=parse_datetime(data.get("due_date")),
             )
 
             self._tasks[task.id] = task
@@ -129,7 +130,7 @@ class TaskStore:
             if "assigned_to" in data:
                 task.assigned_to = data["assigned_to"]
             if "due_date" in data:
-                task.due_date = data["due_date"]
+                task.due_date = parse_datetime(data["due_date"])
 
             task.updated_at = datetime.now(timezone.utc)
             return task

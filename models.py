@@ -5,7 +5,7 @@ from __future__ import annotations
 import enum
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 
 
 # ---------------------------------------------------------------------------
@@ -67,6 +67,26 @@ def format_datetime(dt: datetime) -> str:
         dt = dt.replace(tzinfo=timezone.utc)
     utc = dt.astimezone(timezone.utc)
     return utc.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def parse_datetime(value: Any) -> Optional[datetime]:
+    """Parse an ISO 8601 / RFC 3339 string into a UTC datetime.
+
+    Returns ``None`` when *value* is ``None``.  If *value* is already a
+    ``datetime`` it is returned as-is.  Raises ``ValidationError`` on
+    unparseable strings.
+    """
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value
+    if not isinstance(value, str):
+        raise ValidationError(f"expected datetime string, got {type(value).__name__}")
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (ValueError, TypeError) as exc:
+        raise ValidationError(f"invalid datetime format: {value}") from exc
+    return dt
 
 
 def error_response(code: str, message: str) -> dict:
